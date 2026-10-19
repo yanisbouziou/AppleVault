@@ -2,6 +2,8 @@
 
 AppleVault est une application macOS pour organiser une collection d’appareils Apple : fiches détaillées, réparations, statistiques, profils locaux, affichage plein écran et sauvegardes.
 
+Pour apprendre à utiliser les outils pas à pas, consulte le [Guide complet d’utilisation](GUIDE_UTILISATION.md).
+
 ## Télécharger l’application
 
 La version de test la plus récente est publiée sur [GitHub Releases](https://github.com/yanisbouziou/AppleVault/releases/latest). Elle s’installe sans Xcode.
