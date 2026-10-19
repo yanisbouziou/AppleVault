@@ -16,22 +16,32 @@ Les versions publiques actuelles ne possèdent pas de certificat Apple Developer
 
 Les profils et les collections sont enregistrés localement dans le dossier Application Support d’AppleVault. Remplacer l’application dans **Applications** ne supprime pas ces données. Pour garder une copie séparée avant une mise à jour :
 
-1. Ouvre AppleVault, puis **Réglages > Données**.
-2. Vérifie que **Enregistrer la collection sur ce Mac** et **Créer des sauvegardes automatiques** sont activés.
-3. Sélectionne le profil à sauvegarder, puis clique **Afficher le dossier des sauvegardes…**.
-4. Copie le fichier `.json` le plus récent commençant par `AppleVault-` vers un endroit sûr, par exemple une clé USB ou un dossier iCloud Drive.
+1. Ouvre AppleVault et sélectionne le profil à sauvegarder.
+2. Dans la barre d’outils, ouvre le menu **Sauvegarde** puis choisis **Créer une sauvegarde JSON…**.
+3. Choisis un emplacement sûr, par exemple une clé USB ou un dossier iCloud Drive, et enregistre le fichier.
 
-Chaque profil a son propre dossier de sauvegardes. Le JSON contient les fiches de la collection. Les photos et documents associés sont conservés séparément dans les données locales d’AppleVault ; ne supprime pas ces données lors d’une mise à jour.
+Répète l’opération pour chaque profil à conserver. Le JSON contient les fiches de la collection. Les photos et documents associés sont conservés séparément dans les données locales d’AppleVault ; ne supprime pas ces données lors d’une mise à jour.
 
 ## Restaurer une sauvegarde après la mise à jour
 
 En général, la collection réapparaît automatiquement après remplacement de l’application. Si elle n’apparaît pas :
 
 1. Dans AppleVault, sélectionne le **même profil** que celui qui a été sauvegardé.
-2. Ouvre **Réglages > Données**.
-3. Si la sauvegarde n’est pas déjà dans la liste **Restaurer une ancienne sauvegarde**, clique **Afficher le dossier des sauvegardes…** et copie le fichier `.json` sauvegardé dans ce dossier.
-4. Ferme puis rouvre Réglages. Sous **Restaurer une ancienne sauvegarde**, choisis le bon fichier et clique **Restaurer**.
-5. Confirme l’action. La collection actuelle du profil sélectionné sera remplacée par le contenu de cette sauvegarde.
+2. Dans la barre d’outils, ouvre **Sauvegarde** puis choisis **Restaurer depuis un fichier JSON…**.
+3. Sélectionne le fichier JSON sauvegardé avant la mise à jour.
+
+L’import ajoute les appareils absents et remplace les fiches qui ont le même identifiant. Vérifie que le bon profil est sélectionné avant l’import. Les photos et documents sont des fichiers séparés ; ils restent disponibles si les données locales d’AppleVault n’ont pas été supprimées.
+
+## Menu développeur
+
+Le code développeur `3343` fonctionne uniquement dans une compilation **Debug** lancée depuis Xcode. Il n’est pas inclus dans la version publique téléchargée depuis GitHub.
+
+1. Ouvre `AppleVault.xcodeproj` dans Xcode, sélectionne le schéma **AppleVault** et lance l’application avec **▶︎** ou `⌘R` (la configuration Run par défaut est Debug).
+2. Dans AppleVault, ouvre le menu **Sauvegarde** dans la barre d’outils et choisis **Verrouiller AppleVault**.
+3. Sur l’écran de verrouillage, saisis `3343` dans le champ du mot de passe puis clique **Déverrouiller**.
+4. Pour quitter, utilise **Quitter et reverrouiller** dans le menu développeur.
+
+Le menu développeur affiche des diagnostics et outils de maintenance. Le code ne remplace pas le mot de passe du profil pour déverrouiller la collection.
 
 ## Données et réseau
 
