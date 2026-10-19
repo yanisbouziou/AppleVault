@@ -135,6 +135,32 @@ private final class LocalProfileStore: ObservableObject {
         persist()
     }
 
+    func deleteProfile(id: UUID) {
+        guard let index = profiles.firstIndex(where: { $0.id == id }) else { return }
+        let wasActive = activeProfileID == id
+        let fileManager = FileManager.default
+        let root = directoryURL
+        let collections = root.appendingPathComponent("Collections", isDirectory: true)
+        let collectionFile = collections.appendingPathComponent("\(id.uuidString).json")
+        if let data = try? Data(contentsOf: collectionFile),
+           let devices = try? JSONDecoder().decode([AppleDevice].self, from: data) {
+            devices.forEach { PrivateNoteVault.remove(for: $0.id) }
+        }
+        let profileFiles = [
+            collectionFile,
+            collections.appendingPathComponent("\(id.uuidString)-wishlist.json"),
+            collections.appendingPathComponent("\(id.uuidString)-history.json"),
+            root.appendingPathComponent("Backups", isDirectory: true).appendingPathComponent(id.uuidString, isDirectory: true),
+            root.appendingPathComponent("Photos", isDirectory: true).appendingPathComponent(id.uuidString, isDirectory: true),
+            root.appendingPathComponent("Documents", isDirectory: true).appendingPathComponent(id.uuidString, isDirectory: true)
+        ]
+        profileFiles.forEach { try? fileManager.removeItem(at: $0) }
+        SecItemDelete(baseQuery(for: id) as CFDictionary)
+        profiles.remove(at: index)
+        if wasActive { activeProfileID = profiles.first?.id }
+        persist()
+    }
+
     func reset() {
         profiles.forEach { SecItemDelete(baseQuery(for: $0.id) as CFDictionary) }
         SecItemDelete(legacyPasswordQuery as CFDictionary)
@@ -1533,9 +1559,10 @@ private struct SettingsView: View {
     @Binding var exportFieldsPreference: String
     @State private var showResetConfirmation = false
     @State private var backupToRestore: URL?
+    @State private var profileToDelete: LocalProfile?
 
     private var appVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.3"
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.4"
     }
 
     private var processorName: String {
@@ -1733,21 +1760,28 @@ private struct SettingsView: View {
                 }
                 Section("Profils") {
                     ForEach(profileStore.profiles) { profile in
-                        Button {
-                            profileStore.switchProfile(to: profile.id)
-                        } label: {
-                            HStack {
+                        HStack {
+                            Button {
+                                profileStore.switchProfile(to: profile.id)
+                            } label: {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(profile.nickname).foregroundStyle(.primary)
                                     Text(profile.fullName).font(.caption).foregroundStyle(.secondary)
                                 }
-                                Spacer()
-                                if profile.id == profileStore.activeProfileID {
-                                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.tint)
-                                }
                             }
+                            .buttonStyle(.plain)
+                            Spacer()
+                            if profile.id == profileStore.activeProfileID {
+                                Image(systemName: "checkmark.circle.fill").foregroundStyle(.tint)
+                            }
+                            Button(role: .destructive) {
+                                profileToDelete = profile
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Supprimer le profil \(profile.nickname)")
                         }
-                        .buttonStyle(.plain)
                     }
                     Button("Ajouter un profil…", systemImage: "person.badge.plus", action: addProfile)
                 }
@@ -1763,6 +1797,24 @@ private struct SettingsView: View {
                 dataSettingsSection
             }
             .formStyle(.grouped)
+            .confirmationDialog(
+                "Supprimer le profil \(profileToDelete?.nickname ?? "") ?",
+                isPresented: Binding(
+                    get: { profileToDelete != nil },
+                    set: { if !$0 { profileToDelete = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Supprimer le profil", role: .destructive) {
+                    if let profileToDelete {
+                        profileStore.deleteProfile(id: profileToDelete.id)
+                    }
+                    profileToDelete = nil
+                }
+                Button("Annuler", role: .cancel) { profileToDelete = nil }
+            } message: {
+                Text("La collection, les sauvegardes, photos et documents de ce profil seront supprimés définitivement.")
+            }
             Spacer(minLength: 0)
         }
         .padding(28)
@@ -1885,7 +1937,7 @@ private final class UpdateChecker: ObservableObject {
     static func fetch(url: URL) async throws -> (Data, URLResponse) {
         var request = URLRequest(url: url)
         request.setValue("application/vnd.github+json, application/json", forHTTPHeaderField: "Accept")
-        request.setValue("AppleVault/1.5.3 (macOS update check)", forHTTPHeaderField: "User-Agent")
+        request.setValue("AppleVault/1.5.4 (macOS update check)", forHTTPHeaderField: "User-Agent")
         return try await URLSession.shared.data(for: request)
     }
 
@@ -2241,14 +2293,14 @@ struct ContentView: View {
             }
             updateChecker.checkAutomaticallyIfConfigured(
                 enabled: automaticUpdateChecks, urlString: updateServerURL,
-                currentVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.3"
+                currentVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.4"
             )
         }
         .onChange(of: automaticUpdateChecks) { _, enabled in
             if enabled {
                 updateChecker.checkAutomaticallyIfConfigured(
                     enabled: true, urlString: updateServerURL,
-                    currentVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.3"
+                    currentVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.4"
                 )
             }
         }
@@ -2667,7 +2719,7 @@ struct ContentView: View {
                 }, onAddDocument: { showDocumentImporter = true })
             } else if showHome {
                 HomeView(devices: inventory.devices,
-                         version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.3",
+                         version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.4",
                          homeCardOrder: homeCardOrder, weatherCity: weatherCity,
                          weatherSourceURL: weatherSourceURL,
                          alertLowBattery: alertLowBattery,
