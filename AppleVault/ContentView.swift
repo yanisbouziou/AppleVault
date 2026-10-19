@@ -1419,14 +1419,16 @@ private struct DeveloperModeView: View {
 
     private func testUpdateServer() async {
         guard !isBusy else { return }; isBusy = true; defer { isBusy = false }
-        guard let url = URL(string: updateServerURL), url.scheme?.lowercased() == "https" else {
+        let address = updateServerURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? UpdateChecker.defaultReleasesURL : updateServerURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: address), url.scheme?.lowercased() == "https" else {
             setStatus("Adresse HTTPS du serveur de mises à jour absente ou invalide."); return
         }
         do {
-            let (data, response) = try await URLSession.shared.data(from: url)
-            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
-                  let manifest = try? JSONDecoder().decode(UpdateManifest.self, from: data) else { throw URLError(.badServerResponse) }
-            setStatus("Serveur joignable. Version annoncée : \(manifest.version).")
+            let (data, response) = try await UpdateChecker.fetch(url: url)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
+            let manifest = try UpdateChecker.decodeManifest(data: data, from: url)
+            setStatus("Source joignable. Dernière version publiée : \(manifest.version).")
         } catch { setStatus("Échec du test du serveur de mises à jour.") }
     }
 }
@@ -1533,7 +1535,7 @@ private struct SettingsView: View {
     @State private var backupToRestore: URL?
 
     private var appVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.2"
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.3"
     }
 
     private var processorName: String {
@@ -1612,11 +1614,11 @@ private struct SettingsView: View {
                 LabeledContent("Version actuelle", value: appVersion)
                 TextField("Adresse du serveur de mises à jour", text: $updateServerURL)
                     .textContentType(.URL)
-                Text("Le serveur doit renvoyer un JSON avec version et, facultativement, downloadURL. Exemple : {\"version\":\"1.5.3\",\"downloadURL\":\"https://exemple.fr\"}")
+                Text("Par défaut, AppleVault vérifie les versions publiées sur GitHub. Tu peux aussi indiquer une adresse HTTPS qui renvoie un JSON avec version et, facultativement, downloadURL.")
                     .font(.caption).foregroundStyle(.secondary)
                     .textSelection(.enabled)
                 Toggle("Vérifier automatiquement au démarrage", isOn: $automaticUpdateChecks)
-                Text("La vérification automatique ne fonctionne que si un serveur est configuré. AppleVault ne télécharge ni n’installe les mises à jour automatiquement.")
+                Text("AppleVault vérifie GitHub au démarrage. Si une nouvelle version existe, un lien vers son téléchargement apparaît ici. L’installation reste manuelle : l’app ne remplace jamais ses propres fichiers.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Button(updateChecker.isChecking ? "Vérification en cours…" : "Rechercher les mises à jour", systemImage: "arrow.clockwise") {
@@ -1819,19 +1821,20 @@ private struct SettingsView: View {
 
 @MainActor
 private final class UpdateChecker: ObservableObject {
+    static let defaultReleasesURL = "https://api.github.com/repos/yanisbouziou/AppleVault/releases"
     @Published var result: UpdateCheckResult?
     @Published private(set) var isChecking = false
     private var didAutomaticCheck = false
 
     func checkAutomaticallyIfConfigured(enabled: Bool, urlString: String, currentVersion: String) {
-        guard enabled, !didAutomaticCheck,
-              !urlString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard enabled, !didAutomaticCheck else { return }
         didAutomaticCheck = true
         check(urlString: urlString, currentVersion: currentVersion)
     }
 
     func check(urlString: String, currentVersion: String) {
-        let address = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        let configuredAddress = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        let address = configuredAddress.isEmpty ? Self.defaultReleasesURL : configuredAddress
         guard let url = URL(string: address), url.scheme?.lowercased() == "https", url.host != nil else {
             result = .error("Renseigne une adresse HTTPS valide pour le serveur de mises à jour.")
             return
@@ -1842,11 +1845,11 @@ private final class UpdateChecker: ObservableObject {
         Task {
             defer { isChecking = false }
             do {
-                let (data, response) = try await URLSession.shared.data(from: url)
+                let (data, response) = try await Self.fetch(url: url)
                 guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                     throw URLError(.badServerResponse)
                 }
-                let manifest = try JSONDecoder().decode(UpdateManifest.self, from: data)
+                let manifest = try Self.decodeManifest(data: data, from: url)
                 guard let latest = Self.parsedVersion(manifest.version) else {
                     result = .error("Le serveur a renvoyé un numéro de version invalide.")
                     return
@@ -1870,15 +1873,56 @@ private final class UpdateChecker: ObservableObject {
     }
 
     private static func parsedVersion(_ value: String) -> [Int]? {
-        let parts = value.split(separator: ".").compactMap { Int($0) }
-        guard !parts.isEmpty, parts.count == value.split(separator: ".").count else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let withoutPrefix = trimmed.drop(while: { $0 == "v" || $0 == "V" })
+        let numericVersion = String(withoutPrefix.split(separator: "-", maxSplits: 1).first ?? Substring(withoutPrefix))
+        let versionParts = numericVersion.split(separator: ".")
+        let parts = versionParts.compactMap { Int($0) }
+        guard !parts.isEmpty, parts.count == versionParts.count else { return nil }
         return parts
+    }
+
+    static func fetch(url: URL) async throws -> (Data, URLResponse) {
+        var request = URLRequest(url: url)
+        request.setValue("application/vnd.github+json, application/json", forHTTPHeaderField: "Accept")
+        request.setValue("AppleVault/1.5.3 (macOS update check)", forHTTPHeaderField: "User-Agent")
+        return try await URLSession.shared.data(for: request)
+    }
+
+    static func decodeManifest(data: Data, from url: URL) throws -> UpdateManifest {
+        if url.host?.lowercased() == "api.github.com", url.path.contains("/releases") {
+            let releases = try JSONDecoder().decode([GitHubRelease].self, from: data).filter { !$0.draft }
+            guard let latest = releases
+                .filter({ parsedVersion($0.tagName) != nil })
+                .max(by: { lhs, rhs in
+                    let left = parsedVersion(lhs.tagName) ?? []
+                    let right = parsedVersion(rhs.tagName) ?? []
+                    let count = max(left.count, right.count)
+                    let normalizedLeft = left + Array(repeating: 0, count: count - left.count)
+                    let normalizedRight = right + Array(repeating: 0, count: count - right.count)
+                    return normalizedLeft.lexicographicallyPrecedes(normalizedRight)
+                }) else { throw URLError(.badServerResponse) }
+            return UpdateManifest(version: latest.tagName, downloadURL: latest.htmlURL)
+        }
+        return try JSONDecoder().decode(UpdateManifest.self, from: data)
     }
 }
 
 private struct UpdateManifest: Decodable {
     let version: String
     let downloadURL: String?
+}
+
+private struct GitHubRelease: Decodable {
+    let tagName: String
+    let htmlURL: String
+    let draft: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case tagName = "tag_name"
+        case htmlURL = "html_url"
+        case draft
+    }
 }
 
 private enum UpdateCheckResult {
@@ -1932,7 +1976,7 @@ struct ContentView: View {
     @AppStorage("appleVault.language") private var language = "fr"
     @AppStorage("appleVault.weatherCity") private var weatherCity = "Paris"
     @AppStorage("appleVault.weatherSourceURL") private var weatherSourceURL = "https://api.open-meteo.com"
-    @AppStorage("appleVault.updateServerURL") private var updateServerURL = ""
+    @AppStorage("appleVault.updateServerURL") private var updateServerURL = "https://api.github.com/repos/yanisbouziou/AppleVault/releases"
     @AppStorage("appleVault.automaticUpdateChecks") private var automaticUpdateChecks = true
     @StateObject private var updateChecker = UpdateChecker()
     @AppStorage("appleVault.backupFrequency") private var backupFrequency = "eachSave"
@@ -2188,20 +2232,23 @@ struct ContentView: View {
             isManuallyLocked = profileStore.profile?.requirePasswordOnLaunch == true
         }
         .task {
+            if updateServerURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                updateServerURL = UpdateChecker.defaultReleasesURL
+            }
             if let id = profileStore.activeProfileID {
                 inventory.activate(profileID: id)
                 isManuallyLocked = profileStore.profile?.requirePasswordOnLaunch == true
             }
             updateChecker.checkAutomaticallyIfConfigured(
                 enabled: automaticUpdateChecks, urlString: updateServerURL,
-                currentVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.2"
+                currentVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.3"
             )
         }
         .onChange(of: automaticUpdateChecks) { _, enabled in
             if enabled {
                 updateChecker.checkAutomaticallyIfConfigured(
                     enabled: true, urlString: updateServerURL,
-                    currentVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.2"
+                    currentVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.3"
                 )
             }
         }
@@ -2620,7 +2667,7 @@ struct ContentView: View {
                 }, onAddDocument: { showDocumentImporter = true })
             } else if showHome {
                 HomeView(devices: inventory.devices,
-                         version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.2",
+                         version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.3",
                          homeCardOrder: homeCardOrder, weatherCity: weatherCity,
                          weatherSourceURL: weatherSourceURL,
                          alertLowBattery: alertLowBattery,
