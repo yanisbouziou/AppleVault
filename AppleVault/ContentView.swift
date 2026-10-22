@@ -1034,6 +1034,7 @@ private struct ProfileSetupView: View {
     @State private var confirmation = ""
     @State private var requirePassword = false
     @State private var error: String?
+    @AppStorage("appleVault.language") private var language = "fr"
 
     var body: some View {
         VStack(spacing: 18) {
@@ -1042,6 +1043,10 @@ private struct ProfileSetupView: View {
             Text("Tes informations restent sur ce Mac. Le mot de passe est protégé par le trousseau macOS.")
                 .multilineTextAlignment(.center).foregroundStyle(.secondary).frame(maxWidth: 420)
             Form {
+                Picker("Langue de l’application", selection: $language) {
+                    Text("Français").tag("fr")
+                    Text("English").tag("en")
+                }
                 TextField("Nom complet", text: $fullName)
                 TextField("Pseudo", text: $nickname)
                 SecureField("Mot de passe (8 caractères minimum)", text: $password)
@@ -1562,7 +1567,7 @@ private struct SettingsView: View {
     @State private var profileToDelete: LocalProfile?
 
     private var appVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.4"
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.5"
     }
 
     private var processorName: String {
@@ -1690,9 +1695,10 @@ private struct SettingsView: View {
                 Section("Langue") {
                     Picker("Langue de l’application", selection: $language) {
                         Text("Français").tag("fr")
+                        Text("English").tag("en")
                     }
                     .pickerStyle(.menu)
-                    Text("D’autres langues pourront être ajoutées plus tard.")
+                    Text("La traduction anglaise n’est pas parfaite.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 updateSettingsSection
@@ -1937,7 +1943,7 @@ private final class UpdateChecker: ObservableObject {
     static func fetch(url: URL) async throws -> (Data, URLResponse) {
         var request = URLRequest(url: url)
         request.setValue("application/vnd.github+json, application/json", forHTTPHeaderField: "Accept")
-        request.setValue("AppleVault/1.5.4 (macOS update check)", forHTTPHeaderField: "User-Agent")
+        request.setValue("AppleVault/1.5.5 (macOS update check)", forHTTPHeaderField: "User-Agent")
         return try await URLSession.shared.data(for: request)
     }
 
@@ -2252,6 +2258,7 @@ struct ContentView: View {
                 ProfileSetupView(store: profileStore) { }
             }
         }
+        .environment(\.locale, Locale(identifier: language == "en" ? "en" : "fr"))
         .sheet(isPresented: $showProfileEditor) { ProfileEditorView(store: profileStore) }
         .sheet(isPresented: $showAddProfile) {
             ProfileSetupView(store: profileStore, onComplete: { showAddProfile = false }, isAdditional: true)
@@ -2293,14 +2300,14 @@ struct ContentView: View {
             }
             updateChecker.checkAutomaticallyIfConfigured(
                 enabled: automaticUpdateChecks, urlString: updateServerURL,
-                currentVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.4"
+                currentVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.5"
             )
         }
         .onChange(of: automaticUpdateChecks) { _, enabled in
             if enabled {
                 updateChecker.checkAutomaticallyIfConfigured(
                     enabled: true, urlString: updateServerURL,
-                    currentVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.4"
+                    currentVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.5"
                 )
             }
         }
@@ -2719,7 +2726,7 @@ struct ContentView: View {
                 }, onAddDocument: { showDocumentImporter = true })
             } else if showHome {
                 HomeView(devices: inventory.devices,
-                         version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.4",
+                         version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.5",
                          homeCardOrder: homeCardOrder, weatherCity: weatherCity,
                          weatherSourceURL: weatherSourceURL,
                          alertLowBattery: alertLowBattery,
