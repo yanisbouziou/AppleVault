@@ -37,7 +37,9 @@ Tu peux également renseigner la batterie, l’achat, le vendeur, une valeur per
 
 ### Modifier ou supprimer une fiche
 
-Sélectionne un appareil dans la barre latérale pour ouvrir sa fiche, puis clique **Modifier**. Ajoute une réparation dans **Réparations > Ajouter à l’historique** : tu peux indiquer la date, la description, les pièces, le réparateur et le coût. Clique **Enregistrer** pour conserver les changements.
+Sélectionne un appareil dans la barre latérale pour ouvrir sa fiche, puis clique **Modifier**. Dans **Pièces à réparer**, clique **Ajouter une réparation** pour ajouter un composant, puis choisis la pièce dans le catalogue proposé selon le type d’appareil. Le catalogue inclut les pièces courantes d’iPhone, iPad, Mac, Apple Watch et AirPods, ainsi qu’une option **Autre pièce** pour saisir un composant personnalisé. Choisis **À remplacer** ou **Remplacée** et ajoute un détail si nécessaire. Clique sur **+** pour suivre plusieurs pièces, puis sur **Enregistrer**. Les composants à remplacer apparaissent dans la fiche et dans **Pièces à acheter**; quand tu les marques comme remplacés, ils quittent cette liste.
+
+L’ancienne zone de texte **À prévoir** reste disponible pour les notes de réparation libres. Les réparations déjà effectuées peuvent toujours être consignées dans **Ajouter à l’historique**, avec date, description, pièces, réparateur et coût.
 
 Dans la fiche détaillée :
 
@@ -65,7 +67,7 @@ Depuis le menu **Sauvegarde** de la barre d’outils, tu peux ouvrir **Mode inve
 - **Entretiens & alertes** regroupe les entretiens proches ou en retard, batteries sous le seuil configuré, garanties à surveiller et retours de prêt prévus.
 - **Fiches à compléter** liste les fiches auxquelles il manque un des champs définis comme requis.
 - **Mes favoris** rassemble les appareils marqués avec le cœur.
-- **Réparations à prévoir** affiche les fiches dont le champ de réparations à prévoir n’est pas vide.
+- **Pièces à acheter** regroupe les composants marqués **À remplacer**, avec le nom de l’appareil concerné. Les anciennes notes du champ **À prévoir** y restent également visibles.
 - **Comparer deux appareils** permet de sélectionner deux fiches pour comparer leurs informations côte à côte. Il faut au moins deux appareils.
 - **Doublons possibles** repère les fiches qui ont le même numéro de série. Vérifie les fiches avant d’en supprimer une.
 - **Liste de souhaits** conserve des modèles à rechercher, avec budget, priorité, notes, lien, prix repéré et date de suivi facultative.

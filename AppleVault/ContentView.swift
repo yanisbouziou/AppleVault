@@ -240,6 +240,7 @@ struct AppleDevice: Identifiable, Codable {
     var condition: String
     var repairsDone: String
     var repairsTodo: String
+    var partRepairs: [RepairPartTask]
     var notes: String
     var jailbreak: String
     var shsh: String
@@ -272,11 +273,14 @@ struct AppleDevice: Identifiable, Codable {
     var loanDueDate: Date?
     var privateNotes: String
     var createdAt: Date
+    var hasOutstandingRepairs: Bool {
+        !repairsTodo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || partRepairs.contains { $0.status == .toReplace }
+    }
 
     // Older inventory files do not contain jailbreak or SHSH fields.
     enum CodingKeys: String, CodingKey {
         case id, model, identifier, aNumber, partNumber, storage, color, serial, ios
-        case condition, repairsDone, repairsTodo, notes, jailbreak, shsh
+        case condition, repairsDone, repairsTodo, partRepairs, notes, jailbreak, shsh
         case batteryHealth, purchaseDate, purchasePrice, photoPath, appleImageURL
         case estimatedValue, repairHistory, tags, isFavorite, maintenanceDate
         case warrantyEndDate, accessories, hasBox, hasCharger, hasInvoice, warningsIgnored, timeline, documents
@@ -287,6 +291,7 @@ struct AppleDevice: Identifiable, Codable {
     init(model: String, identifier: String, aNumber: String, partNumber: String = "", storage: String,
          color: String, serial: String, ios: String, condition: String,
          repairsDone: String, repairsTodo: String, notes: String,
+         partRepairs: [RepairPartTask] = [],
          jailbreak: String = "", shsh: String = "", batteryHealth: String = "",
          purchaseDate: String = "", purchasePrice: String = "", photoPath: String = "",
          appleImageURL: String = "", estimatedValue: String = "",
@@ -309,6 +314,7 @@ struct AppleDevice: Identifiable, Codable {
         self.condition = condition
         self.repairsDone = repairsDone
         self.repairsTodo = repairsTodo
+        self.partRepairs = partRepairs
         self.notes = notes
         self.jailbreak = jailbreak
         self.shsh = shsh
@@ -351,6 +357,7 @@ struct AppleDevice: Identifiable, Codable {
         condition = try values.decodeIfPresent(String.self, forKey: .condition) ?? "Bon état"
         repairsDone = try values.decodeIfPresent(String.self, forKey: .repairsDone) ?? ""
         repairsTodo = try values.decodeIfPresent(String.self, forKey: .repairsTodo) ?? ""
+        partRepairs = try values.decodeIfPresent([RepairPartTask].self, forKey: .partRepairs) ?? []
         notes = try values.decodeIfPresent(String.self, forKey: .notes) ?? ""
         jailbreak = try values.decodeIfPresent(String.self, forKey: .jailbreak) ?? ""
         shsh = try values.decodeIfPresent(String.self, forKey: .shsh) ?? ""
@@ -479,6 +486,130 @@ struct RepairEntry: Identifiable, Codable {
     }
 }
 
+enum RepairPartStatus: String, Codable, CaseIterable, Identifiable, Equatable {
+    case toReplace
+    case replaced
+    var id: String { rawValue }
+    var title: String { self == .toReplace ? "À remplacer" : "Remplacée" }
+    var symbol: String { self == .toReplace ? "cart" : "checkmark.circle.fill" }
+}
+
+struct RepairPartTask: Identifiable, Codable, Equatable {
+    var id = UUID()
+    var partName: String
+    var customName = ""
+    var status: RepairPartStatus = .toReplace
+    var notes = ""
+    enum CodingKeys: String, CodingKey { case id, partName, customName, status, notes }
+    var displayName: String { partName == "Autre pièce" && !customName.isEmpty ? customName : partName }
+    init(id: UUID = UUID(), partName: String, customName: String = "", status: RepairPartStatus = .toReplace, notes: String = "") {
+        self.id = id; self.partName = partName; self.customName = customName; self.status = status; self.notes = notes
+    }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        partName = try values.decodeIfPresent(String.self, forKey: .partName) ?? "Autre pièce"
+        customName = try values.decodeIfPresent(String.self, forKey: .customName) ?? ""
+        status = try values.decodeIfPresent(RepairPartStatus.self, forKey: .status) ?? .toReplace
+        notes = try values.decodeIfPresent(String.self, forKey: .notes) ?? ""
+    }
+}
+
+private struct RepairPartEditor: View {
+    @Binding var tasks: [RepairPartTask]
+    let model: String
+    private var choices: [String] { RepairPartCatalog.parts(for: model) }
+
+    var body: some View {
+        Section {
+            ForEach($tasks) { $task in
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Picker("Pièce", selection: $task.partName) {
+                            ForEach(choices, id: \.self) { Text(LocalizedStringKey($0)).tag($0) }
+                        }
+                        .labelsHidden().frame(maxWidth: .infinity, alignment: .leading)
+                        Button(role: .destructive) { tasks.removeAll { $0.id == task.id } } label: {
+                            Image(systemName: "minus.circle.fill")
+                        }
+                        .buttonStyle(.borderless).help("Supprimer cette pièce")
+                    }
+                    if task.partName == "Autre pièce" {
+                        TextField("Nom de la pièce", text: $task.customName)
+                    }
+                    Picker("Statut", selection: $task.status) {
+                        ForEach(RepairPartStatus.allCases) { status in
+                            Text(LocalizedStringKey(status.title)).tag(status)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    TextField("Détail ou panne constatée (facultatif)", text: $task.notes)
+                }
+                .padding(.vertical, 5)
+            }
+            Button("Ajouter une réparation", systemImage: "plus.circle") {
+                let firstPart = choices.first(where: { $0 != "Autre pièce" }) ?? "Autre pièce"
+                tasks.append(RepairPartTask(partName: firstPart))
+            }
+        } header: {
+            Text("Pièces à réparer")
+        } footer: {
+            Text("Les pièces marquées « À remplacer » apparaissent dans la liste des pièces à acheter.")
+        }
+    }
+}
+
+private enum RepairPartCatalog {
+    static let iPhone = ["Écran complet", "Batterie", "Vitre arrière", "Châssis", "Caméra arrière principale", "Caméra ultra grand-angle", "Téléobjectif", "Caméra avant / TrueDepth", "Connecteur de charge", "Haut-parleur inférieur", "Écouteur", "Microphone", "Moteur Taptic", "Bouton latéral", "Boutons de volume", "Bouton Action / silencieux", "Nappe de charge", "Nappe de boutons", "Antenne", "Tiroir SIM", "Carte mère", "Face ID", "Autre pièce"]
+    static let iPad = ["Écran / dalle LCD", "Vitre tactile", "Batterie", "Caméra arrière", "Caméra avant", "Connecteur de charge", "Haut-parleur", "Bouton principal / Touch ID", "Bouton supérieur", "Boutons de volume", "Nappe de boutons", "Antenne Wi‑Fi / cellulaire", "Carte mère", "Châssis", "Autre pièce"]
+    static let mac = ["Écran", "Batterie", "Clavier", "Trackpad", "Nappe du trackpad", "Ventilateur", "Haut-parleurs", "Carte USB‑C / MagSafe", "Port USB‑C", "Port MagSafe", "SSD", "Carte mère", "Boîtier supérieur", "Charnières", "Antenne Wi‑Fi", "Alimentation", "Autre pièce"]
+    static let watch = ["Écran", "Batterie", "Couronne digitale", "Bouton latéral", "Haut-parleur", "Microphone", "Moteur Taptic", "Vitre arrière / capteurs", "Nappe écran", "Boîtier", "Autre pièce"]
+    static let audio = ["Écouteur gauche", "Écouteur droit", "Boîtier de charge", "Batterie du boîtier", "Connecteur de charge", "Haut-parleur", "Microphone", "Autre pièce"]
+    static let classicIPhone = ["Écran complet", "Batterie", "Bouton principal", "Caméra arrière", "Caméra avant", "Connecteur Lightning", "Prise casque 3,5 mm", "Écouteur", "Haut-parleur", "Microphone", "Bouton marche/veille", "Boutons de volume", "Nappe du bouton principal", "Tiroir SIM", "Antenne Wi‑Fi / cellulaire", "Carte mère", "Châssis", "Autre pièce"]
+    static let desktopMac = ["Alimentation", "Ventilateur", "SSD", "Mémoire vive", "Carte graphique", "Carte mère", "Antenne Wi‑Fi", "Port USB‑C", "Port HDMI", "Port Ethernet", "Connecteur audio", "Boîtier", "Autre pièce"]
+    static let imac = ["Écran", "Alimentation", "Ventilateur", "SSD", "Mémoire vive", "Haut-parleurs", "Caméra", "Antenne Wi‑Fi", "Carte mère", "Boîtier arrière", "Support", "Autre pièce"]
+    static let english: [String: String] = [
+        "Écran complet": "Display assembly", "Écran / dalle LCD": "Display / LCD panel", "Écran": "Display",
+        "Vitre tactile": "Touch glass", "Batterie": "Battery", "Vitre arrière": "Back glass", "Châssis": "Frame",
+        "Caméra arrière principale": "Main rear camera", "Caméra ultra grand-angle": "Ultra-wide camera", "Téléobjectif": "Telephoto camera",
+        "Caméra avant / TrueDepth": "Front camera / TrueDepth", "Caméra arrière": "Rear camera", "Caméra avant": "Front camera",
+        "Connecteur de charge": "Charging port", "Haut-parleur inférieur": "Bottom speaker", "Écouteur": "Earpiece speaker",
+        "Écouteur gauche": "Left earbud", "Écouteur droit": "Right earbud", "Haut-parleur": "Speaker", "Microphone": "Microphone",
+        "Moteur Taptic": "Taptic Engine", "Bouton latéral": "Side button", "Boutons de volume": "Volume buttons",
+        "Bouton Action / silencieux": "Action / mute switch", "Nappe de charge": "Charging flex cable", "Nappe de boutons": "Button flex cable",
+        "Antenne": "Antenna", "Antenne Wi‑Fi / cellulaire": "Wi-Fi / cellular antenna", "Tiroir SIM": "SIM tray",
+        "Carte mère": "Logic board", "Face ID": "Face ID assembly", "Bouton principal / Touch ID": "Home button / Touch ID",
+        "Bouton supérieur": "Top button", "Ventilateur": "Fan", "Clavier": "Keyboard", "Trackpad": "Trackpad",
+        "Nappe du trackpad": "Trackpad cable", "Haut-parleurs": "Speakers", "Carte USB‑C / MagSafe": "USB-C / MagSafe board",
+        "Port USB‑C": "USB-C port", "Port MagSafe": "MagSafe port", "SSD": "SSD", "Boîtier supérieur": "Top case",
+        "Charnières": "Hinges", "Antenne Wi‑Fi": "Wi-Fi antenna", "Alimentation": "Power supply",
+        "Couronne digitale": "Digital Crown", "Vitre arrière / capteurs": "Back glass / sensors", "Nappe écran": "Display flex cable",
+        "Boîtier": "Enclosure", "Boîtier de charge": "Charging case", "Batterie du boîtier": "Charging case battery", "Autre pièce": "Other part",
+        "Bouton principal": "Home button", "Connecteur Lightning": "Lightning connector", "Prise casque 3,5 mm": "3.5 mm headphone jack",
+        "Bouton marche/veille": "Power / sleep button", "Nappe du bouton principal": "Home button flex cable", "Mémoire vive": "RAM",
+        "Carte graphique": "Graphics card", "Port HDMI": "HDMI port", "Port Ethernet": "Ethernet port", "Connecteur audio": "Audio jack",
+        "Caméra": "Camera", "Boîtier arrière": "Rear enclosure", "Support": "Stand"
+    ]
+
+    static func parts(for model: String) -> [String] {
+        let value = model.lowercased()
+        if value.contains("iphone 5") || value.contains("iphone5") { return classicIPhone }
+        if value.contains("iphone") { return iPhone }
+        if value.contains("ipad") { return iPad }
+        if value.contains("watch") { return watch }
+        if value.contains("airpods") || value.contains("beats") { return audio }
+        if value.contains("mac mini") || value.contains("mac studio") || value.contains("mac pro") { return desktopMac }
+        if value.contains("imac") { return imac }
+        if value.contains("mac") || value.contains("book") { return mac }
+        return Array(Set(iPhone + iPad + mac + watch + audio)).sorted()
+    }
+}
+
+private func pendingRepairCount(in devices: [AppleDevice]) -> Int {
+    devices.flatMap(\.partRepairs).filter { $0.status == .toReplace }.count +
+        devices.filter { !$0.repairsTodo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
+}
+
 struct DeviceTimelineEntry: Identifiable, Codable {
     var id = UUID()
     var date = Date.now
@@ -524,7 +655,7 @@ private func automaticEstimate(for device: AppleDevice) -> Double? {
     let storageText = device.storage.lowercased()
     let capacityFactor = storageText.contains("2 to") || storageText.contains("2tb") ? 1.2 : storageText.contains("1 to") || storageText.contains("1tb") ? 1.12 : storageText.contains("512") ? 1.06 : storageText.contains("256") ? 1.03 : 1
     let batteryFactor: Double = (batteryPercent(from: device.batteryHealth).map { $0 < 70 ? 0.8 : $0 < 80 ? 0.9 : 1 } ?? 1)
-    let repairFactor = device.repairsTodo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 1 : 0.75
+    let repairFactor = device.hasOutstandingRepairs ? 0.75 : 1
     return ((base * stateFactor * capacityFactor * batteryFactor * repairFactor) / 10).rounded() * 10
 }
 
@@ -1567,7 +1698,7 @@ private struct SettingsView: View {
     @State private var profileToDelete: LocalProfile?
 
     private var appVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.5"
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.6"
     }
 
     private var processorName: String {
@@ -1943,7 +2074,7 @@ private final class UpdateChecker: ObservableObject {
     static func fetch(url: URL) async throws -> (Data, URLResponse) {
         var request = URLRequest(url: url)
         request.setValue("application/vnd.github+json, application/json", forHTTPHeaderField: "Accept")
-        request.setValue("AppleVault/1.5.5 (macOS update check)", forHTTPHeaderField: "User-Agent")
+        request.setValue("AppleVault/1.5.6 (macOS update check)", forHTTPHeaderField: "User-Agent")
         return try await URLSession.shared.data(for: request)
     }
 
@@ -2085,6 +2216,24 @@ struct ContentView: View {
     @State private var showCompletionSettings = false
     @State private var tagFilter = "Tous"
     @State private var showHome = true
+
+    private var pendingRepairPartCount: Int {
+        pendingRepairCount(in: inventory.devices)
+    }
+
+    private var devicesNeedingParts: [AppleDevice] {
+        inventory.devices.filter { device in
+            device.hasOutstandingRepairs
+        }
+    }
+
+    private func purchaseListDescription(for device: AppleDevice) -> String {
+        let parts = device.partRepairs.filter { $0.status == .toReplace }.map { task in
+            language == "en" ? (RepairPartCatalog.english[task.displayName] ?? task.displayName) : task.displayName
+        }
+        let legacy = device.repairsTodo.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (parts + (legacy.isEmpty ? [] : [legacy])).joined(separator: " · ")
+    }
 
     private func missingFields(for device: AppleDevice) -> [String] {
         let labels = ["identifier": (device.identifier, "identifiant"), "aNumber": (device.aNumber, "numéro A"),
@@ -2300,14 +2449,14 @@ struct ContentView: View {
             }
             updateChecker.checkAutomaticallyIfConfigured(
                 enabled: automaticUpdateChecks, urlString: updateServerURL,
-                currentVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.5"
+                currentVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.6"
             )
         }
         .onChange(of: automaticUpdateChecks) { _, enabled in
             if enabled {
                 updateChecker.checkAutomaticallyIfConfigured(
                     enabled: true, urlString: updateServerURL,
-                    currentVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.5"
+                    currentVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.6"
                 )
             }
         }
@@ -2448,7 +2597,7 @@ struct ContentView: View {
                         showMaintenance = false
                         showRepairQueue = true
                     } label: {
-                        Label("Réparations à prévoir (\(inventory.devices.filter { !$0.repairsTodo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count))", systemImage: "wrench.and.screwdriver.fill")
+                        Label("Pièces à acheter (\(pendingRepairPartCount))", systemImage: "wrench.and.screwdriver.fill")
                     }
                     .buttonStyle(.plain)
                     Button {
@@ -2677,10 +2826,10 @@ struct ContentView: View {
                     detail: { [$0.storage, $0.condition].filter { !$0.isEmpty }.joined(separator: " · ") },
                     onSelect: { selectedID = $0 })
             } else if showRepairQueue {
-                DeviceShortcutView(title: "Réparations à prévoir", symbol: "wrench.and.screwdriver.fill",
-                    emptyMessage: "Ajoute les interventions à prévoir dans les fiches de tes appareils.",
-                    devices: inventory.devices.filter { !$0.repairsTodo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty },
-                    detail: { $0.repairsTodo },
+                DeviceShortcutView(title: "Pièces à acheter", symbol: "wrench.and.screwdriver.fill",
+                    emptyMessage: "Ajoute des pièces à remplacer dans la fiche d’un appareil pour les retrouver ici.",
+                    devices: devicesNeedingParts,
+                    detail: { purchaseListDescription(for: $0) },
                     onSelect: { selectedID = $0 })
             } else if showIncompleteDevices {
                 DeviceShortcutView(title: "Fiches à compléter", symbol: "checklist",
@@ -2726,7 +2875,7 @@ struct ContentView: View {
                 }, onAddDocument: { showDocumentImporter = true })
             } else if showHome {
                 HomeView(devices: inventory.devices,
-                         version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.5",
+                         version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.6",
                          homeCardOrder: homeCardOrder, weatherCity: weatherCity,
                          weatherSourceURL: weatherSourceURL,
                          alertLowBattery: alertLowBattery,
@@ -2802,6 +2951,10 @@ struct ContentView: View {
                         if device.condition != updated.condition { events.append(.init(title: "État modifié", detail: "\(device.condition) → \(updated.condition)")) }
                         if device.batteryHealth != updated.batteryHealth { events.append(.init(title: "Batterie mise à jour", detail: "\(device.batteryHealth.isEmpty ? "—" : device.batteryHealth + "%") → \(updated.batteryHealth.isEmpty ? "—" : updated.batteryHealth + "%")")) }
                         if device.repairsTodo != updated.repairsTodo { events.append(.init(title: "Réparations à prévoir modifiées", detail: updated.repairsTodo.isEmpty ? "Aucune intervention à prévoir" : updated.repairsTodo)) }
+                        if device.partRepairs != updated.partRepairs {
+                            let outstanding = updated.partRepairs.filter { $0.status == .toReplace }.map(\.displayName)
+                            events.append(.init(title: "Liste des pièces à réparer mise à jour", detail: outstanding.isEmpty ? "Aucune pièce à remplacer" : outstanding.joined(separator: ", ")))
+                        }
                         if device.repairHistory.count < updated.repairHistory.count, let repair = updated.repairHistory.last { events.append(.init(title: "Réparation enregistrée", detail: repair.description)) }
                         if device.accessories != updated.accessories || device.hasBox != updated.hasBox || device.hasCharger != updated.hasCharger || device.hasInvoice != updated.hasInvoice { events.append(.init(title: "Accessoires mis à jour", detail: updated.accessories)) }
                         if device.warrantyEndDate != updated.warrantyEndDate { events.append(.init(title: "Garantie mise à jour", detail: updated.warrantyEndDate?.formatted(date: .abbreviated, time: .omitted) ?? "Fin de garantie supprimée")) }
@@ -2809,7 +2962,7 @@ struct ContentView: View {
                         tracked.timeline.append(contentsOf: events)
                         inventory.devices[index] = tracked
                 }
-                let addedRepair = updated.repairHistory.count > device.repairHistory.count
+                let addedRepair = updated.repairHistory.count > device.repairHistory.count || updated.partRepairs.count > device.partRepairs.count
                 inventory.record(addedRepair ? "Réparation ajoutée" : "Fiche modifiée", deviceName: updated.model)
             }
         }
@@ -3062,7 +3215,7 @@ private struct HomeView: View {
         devices.filter { device in
             guard !device.warningsIgnored else { return false }
             let lowBattery = alertLowBattery && (batteryPercent(from: device.batteryHealth).map { $0 < 80 } ?? false)
-            let needsRepair = !device.repairsTodo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let needsRepair = device.hasOutstandingRepairs
             let warrantyCutoff = Calendar.current.date(byAdding: .day, value: 30, to: .now) ?? .now
             let warranty = alertWarranty && (device.warrantyEndDate.map { $0 <= warrantyCutoff } ?? false)
             return lowBattery || needsRepair || warranty
@@ -3106,7 +3259,7 @@ private struct HomeView: View {
                         } else if key == "favorites" {
                             HomeStatCard(title: "Favoris", value: "\(devices.filter(\.isFavorite).count)", symbol: "heart.fill", tint: .pink)
                         } else if key == "repairs" {
-                            HomeStatCard(title: "Réparations", value: "\(devices.filter { !$0.repairsTodo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count)", symbol: "wrench.and.screwdriver.fill", tint: .orange)
+                            HomeStatCard(title: "Réparations", value: "\(pendingRepairCount(in: devices))", symbol: "wrench.and.screwdriver.fill", tint: .orange)
                         }
                     }
                 }
@@ -3471,7 +3624,7 @@ private struct DashboardView: View {
     private var avgBattery: Double? { batteries.isEmpty ? nil : batteries.map { $0.1 }.reduce(0, +) / Double(batteries.count) }
     private var lowBattery: Int { batteries.filter { $0.1 < 80 }.count }
     private var pendingRepairs: [AppleDevice] {
-        devices.filter { !$0.repairsTodo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        devices.filter(\.hasOutstandingRepairs)
     }
     private var filledPhotos: Int { devices.filter { !$0.photoPath.isEmpty || !$0.appleImageURL.isEmpty }.count }
     private var filledSerials: Int { devices.filter { !$0.serial.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count }
@@ -4313,6 +4466,29 @@ private struct DeviceDetailView: View {
                     .padding(.vertical, 5)
                 }
 
+                GroupBox("Pièces de réparation") {
+                    if device.partRepairs.isEmpty {
+                        Text("Aucune pièce de réparation suivie. Utilise « Modifier » pour ajouter une pièce.")
+                            .foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 5)
+                    } else {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(device.partRepairs) { task in
+                                HStack(alignment: .top, spacing: 10) {
+                                    Image(systemName: task.status.symbol)
+                                        .foregroundStyle(task.status == .toReplace ? .orange : .green)
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(LocalizedStringKey(task.displayName)).font(.headline)
+                                        Text(LocalizedStringKey(task.status.title)).font(.caption).foregroundStyle(.secondary)
+                                        if !task.notes.isEmpty { Text(task.notes).font(.caption).foregroundStyle(.secondary) }
+                                    }
+                                    Spacer()
+                                }
+                                if task.id != device.partRepairs.last?.id { Divider() }
+                            }
+                        }.padding(.vertical, 5)
+                    }
+                }
+
                 GroupBox("Historique des réparations") {
                     if device.repairHistory.isEmpty {
                         Text("Aucune réparation enregistrée pour le moment.")
@@ -4556,6 +4732,7 @@ struct AddDeviceView: View {
     @State private var condition = "Bon état"
     @State private var repairsDone = ""
     @State private var repairsTodo = ""
+    @State private var partRepairs: [RepairPartTask] = []
     @State private var notes = ""
     @State private var jailbreak = ""
     @State private var shsh = ""
@@ -4594,7 +4771,7 @@ struct AddDeviceView: View {
                     onSave(AppleDevice(model: model, identifier: identifier, aNumber: aNumber, partNumber: partNumber,
                         storage: storage, color: color, serial: serial, ios: ios,
                         condition: condition, repairsDone: repairsDone, repairsTodo: repairsTodo,
-                        notes: notes, jailbreak: jailbreak, shsh: shsh,
+                        notes: notes, partRepairs: partRepairs, jailbreak: jailbreak, shsh: shsh,
                         batteryHealth: batteryHealth, purchaseDate: purchaseDate,
                         purchasePrice: purchasePrice, photoPath: photoPath,
                         appleImageURL: appleImageURL, estimatedValue: estimatedValue,
@@ -4656,6 +4833,7 @@ struct AddDeviceView: View {
                     TextField("Réparations effectuées", text: $repairsDone, axis: .vertical)
                     TextField("Réparations à prévoir", text: $repairsTodo, axis: .vertical)
                 }
+                RepairPartEditor(tasks: $partRepairs, model: model)
                 Section("Rappel d’entretien") {
                     Toggle("Programmer une date d’entretien", isOn: $hasMaintenanceReminder)
                     if hasMaintenanceReminder {
@@ -4835,6 +5013,7 @@ private struct EditDeviceView: View {
                         repairDescription = ""; repairParts = ""; repairer = ""; repairCost = ""
                     }.disabled(repairDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
+                RepairPartEditor(tasks: $device.partRepairs, model: device.model)
                 Section("Rappel d’entretien") {
                     Toggle("Programmer une date d’entretien", isOn: $hasMaintenanceReminder)
                     if hasMaintenanceReminder {
